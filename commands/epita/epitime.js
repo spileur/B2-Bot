@@ -71,6 +71,7 @@ class EpiTimeCommand extends Command {
 
         firebase.database().ref(`webhooks/${message.channel.id}`).set({
             class: group.id,
+            display: group.name,
             webhookId: webhook.id,
             webhookToken: webhook.token
         });

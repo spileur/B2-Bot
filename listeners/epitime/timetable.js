@@ -1,3 +1,4 @@
+const fetch = require("node-fetch");
 const { Listener } = require('discord-akairo');
 const { TextChannel, WebhookClient } = require('discord.js');
 const ical = require('node-ical');
@@ -51,60 +52,32 @@ class TimetableListener extends Listener {
         const waitTime = (date.getTime()-now.getTime());
         setTimeout(async () => {
             date.setDate(date.getDate()+1);
-            //this.sendTimeTable(date);
             this.publishWebhook(date);
             this.loopTimeTable();
         }, waitTime);
     }
 
-    async sendTimeTable(date){
-        
-        if(DateTime.fromJSDate(date).weekday == 6 || DateTime.fromJSDate(date).weekday == 7) return;
-
-        const channelTimetable = await this.client.channels.fetch(this.channelTimetable);
-
-        const timetables = await ical.async.fromURL('https://ichronos.net/feed/' + this.class + '-1.ics');
-        const timetables_2 = await ical.async.fromURL('https://ichronos.net/feed/' + this.class + '-2.ics');
-        const info_semaine = Object.values(timetables).find(event => event.start.getHours() >= 0 && event.start.getHours() <= 5 && event.start.getDate() == date.getDate());
-
-        channelTimetable.send(' ⁢⁢⁢⁢⁢ \n ⁢⁢⁢⁢⁢ \n ⁢⁢⁢⁢⁢ \n**__' + this.formatDate(date) + '__**' +
-            (info_semaine ? '\n*' + info_semaine.summary.charAt(0) + info_semaine.summary.substr(1).toLowerCase() + '*' : ''));
-
-        let i = 0;
-        for (const timetable of Object.values(timetables)) {
-            if(timetable.start.getDate() !== date.getDate() || timetable.start.getHours() == 3) continue;
-
-            let timetable_2 = Object.values(timetables_2).find(event => event.start.getTime() == timetable.start.getTime());
-            if(timetable.summary === 'CIE' || timetable.summary === 'TIM') timetable.summary = 'Anglais';
-
-            const embed = this.client.util.embed()
-                                .setTitle((this.summary_icon[timetable.summary] ? this.summary_icon[timetable.summary][0] + '  ' : '') + timetable.summary)
-                                .setColor((this.summary_icon[timetable.summary] ? this.summary_icon[timetable.summary][1] : this.client.colors.gray))
-                                .setDescription(this.generateDescription(timetable))
-                                .setTimestamp(timetable.start);
-
-            if(timetable_2 && timetable_2.summary !== timetable.summary){
-                embed.addField('Groupe 1', embed.description, true);
-                embed.addField('Groupe 2', this.generateDescription(timetable_2), true);
-                embed.setDescription("");
-            }
-
-            channelTimetable.send(embed);
-            i++;
-        };
-
-        if(i == 0){
-            channelTimetable.send(this.client.util.embed().setColor(this.client.colors.red).setTitle('❌ Aucun cours'))
-        }
+    generateDescription(course) {
+        return '**' + DateTime.fromISO(course.startDate).setLocale('fr').toFormat("HH'h'mm") + ' - ' +
+                                    DateTime.fromISO(course.endDate).setLocale('fr').toFormat("HH'h'mm") + '**' + '\n' +
+                                    '__Durée :__ ' + this.formatTime(Date.parse(course.endDate)-Date.parse(course.startDate)) + '\n' +
+                                    (course.rooms.length > 0 ? '__Salle(s) :__ ' + this.getList(course.rooms) + '\n' : '') +
+                                    (course.teachers.length > 0 ? '__Prof(s) :__ ' + this.getList(course.teachers) + '\n' : '');
     }
 
-    generateDescription(timetable) {
-        return '**' + DateTime.fromJSDate(timetable.start).setLocale('fr').toFormat("HH'h'mm") + ' - ' +
-                                    DateTime.fromJSDate(timetable.end).setLocale('fr').toFormat("HH'h'mm") + '**' + '\n' +
-                                    '__Durée :__ ' + this.formatTime(timetable.end.getTime()-timetable.start.getTime()) + '\n' +
-                                    (timetable.location ? '__Salle :__ ' + timetable.location + '\n' : '') +
-                                    (timetable.description && timetable.description.startsWith('Prof') ? '__Prof :__ ' + timetable.description.replace('Profs : ', '')
-                                    .replace('Prof : ', '').split('(')[0] + '\n' : '');
+    getList(list){
+        let output = "";
+        let start = true;
+        for(let e of list){
+            if(start)
+                start = false;
+            else
+                output += ", ";
+            if(e.firstname)
+                output += e.firstname + " ";
+            output += e.name;
+        }
+        return output;
     }
     
     formatTime(time){
@@ -123,7 +96,7 @@ class TimetableListener extends Listener {
     formatDate(date){
     return DateTime.fromJSDate(date, { zone: "Europe/Paris" })
       .setLocale("fr")
-      .toFormat('ccc dd LLLL')
+      .toFormat('cccc dd LLLL')
       .replace(/([0-9]{4}) (M[0-9]{2}) ([0-9]{2})/, "$3 $2 $1")
       .replace(/M01/, "Janvier")
       .replace(/M02/, "Février")
@@ -146,6 +119,10 @@ class TimetableListener extends Listener {
       .replace(/Sun/, 'Dimanche');
     }
 
+    /**
+     * 
+     * @param {Date} date 
+     */
     async publishWebhook(date){
         if(DateTime.fromJSDate(date).weekday == 6 || DateTime.fromJSDate(date).weekday == 7) return;
 
@@ -158,34 +135,43 @@ class TimetableListener extends Listener {
                 let content = '';
                 let embeds = [];
     
-                const timetables = await ical.async.fromURL('https://ichronos.net/feed/INFO' + server.class.replace('#', '%23') + '-1.ics');
-                const timetables_2 = await ical.async.fromURL('https://ichronos.net/feed/INFO' + server.class.replace('#', '%23') + '-2.ics');
-                const info_semaine = Object.values(timetables).find(event => event.start != null && event.start.getDate() == date.getDate() && event.start.getHours() == 3);
+                let timetables = await fetch('https://zeus.infinity.study/api/groups/' + server.class + "/reservations" ,{
+                    method: "GET"
+                }).then(response => response.json());
+
+                /*const timetables = await ical.async.fromURL('https://ichronos.net/feed/INFO' + server.class.replace('#', '%23') + '-1.ics');
+                const timetables_2 = await ical.async.fromURL('https://ichronos.net/feed/INFO' + server.class.replace('#', '%23') + '-2.ics');*/
                 
-                content = ' ⁢⁢⁢⁢⁢ \n ⁢⁢⁢⁢⁢ \n ⁢⁢⁢⁢⁢ \n**__' + this.formatDate(date) + '__**' +
-                    (info_semaine ? '\n*' + info_semaine.summary.charAt(0) + info_semaine.summary.substr(1).toLowerCase() + '*' : '');
+                content = ' ⁢⁢⁢⁢⁢ \n ⁢⁢⁢⁢⁢ \n ⁢⁢⁢⁢⁢ \n**__' + this.formatDate(date) + '__**';
                 
+                let alreadyDone = [];
+
                 let i = 0;
-                for (const timetable of Object.values(timetables)) {
+                for (const timetable of timetables) {
                     
-                    if(timetable.start == null || timetable.start.getDate() !== date.getDate() || timetable.start.getHours() == 3) continue;
+                    if(new Date(timetable.startDate).getDate() != date.getDate() ||
+                        new Date(timetable.startDate).getMonth() != date.getMonth() || alreadyDone.includes(Date.parse(timetable.startDate))) continue;
                     
-                    let timetable_2 = Object.values(timetables_2).find(event => event.start.getTime() == timetable.start.getTime());
+                    let timetable_groups = await timetables.filter(e => e.startDate === Date.parse(timetable.startDate) && e.groups.find(e => e.id == server.class) == null);
                     if(timetable.summary === 'CIE' || timetable.summary === 'TIM') timetable.summary = 'Anglais';
                     
+                    
                     const embed = this.client.util.embed()
-                                        .setTitle((this.summary_icon[timetable.summary] ? this.summary_icon[timetable.summary][0] + '  ' : '') + timetable.summary)
-                                        .setColor((this.summary_icon[timetable.summary] ? this.summary_icon[timetable.summary][1] : '#3F48CC'))
+                                        .setTitle((this.summary_icon[timetable.name] ? this.summary_icon[timetable.name][0] + '  ' : '') + timetable.name)
+                                        .setColor((this.summary_icon[timetable.name] ? this.summary_icon[timetable.name][1] : '#3F48CC'))
                                         .setDescription(this.generateDescription(timetable))
-                                        .setTimestamp(timetable.start);
-                    if(timetable_2 && timetable_2.summary !== timetable.summary){
-                        embed.addField('Groupe 1', embed.description, true);
-                        embed.addField('Groupe 2', this.generateDescription(timetable_2), true);
+                                        .setTimestamp(Date.parse(timetable.startDate));
+                    
+                    if(timetable_groups > 0){
+                        for(let el_timetable of timetable_groups){
+                            embed.addField(el_timetable.groups[0].name, this.generateDescription(el_timetable), true);
+                        }
                         embed.setDescription("");
                     }
-    
+
                     embeds.push(embed);
-    
+                    alreadyDone.push(Date.parse(timetable.startDate));
+
                     i++;
                 };
     
@@ -194,8 +180,8 @@ class TimetableListener extends Listener {
                 }
     
                 webhookClient.send(content, {
-                    username: 'EpiTime - ' + server.class,
-                    avatarURL: 'https://i.imgur.com/3ljRmQm.png'/*'https://i.imgur.com/vLm0xmV.png'*/,
+                    username: 'EpiTime - ' + server.display,
+                    avatarURL: 'https://i.imgur.com/vLm0xmV.png',
                     embeds: embeds,
                 });
             
