@@ -12,6 +12,7 @@ class EpiTimeCommand extends Command {
             args: [
 				{
 					id: 'class',
+                    type: 'string',
                     match: 'content',
                     prompt: {
                         time: 1,
@@ -54,13 +55,12 @@ class EpiTimeCommand extends Command {
             return message.util.send(embed);
         }
 
-        let groups = await fetch('https://zeus.3ie.fr/api/group',{
-            method: "GET",
-            headers: {
-                "Authorization": "Bearer " + this.client.zeusToken,
-            }
+        let groups = await fetch('https://zeus.infinity.study/api/groups',{
+            method: "GET"
         }).then(response => response.json());
-        let group = groups.find(e => e.name === args.class);
+        groups = await this.toEntities(groups);
+
+        let group = await groups.find(m => m.name === args.class);
 
         if(!group)
            throw new Error('La classe est invalide ou introuvable (ex: S1S2 B2)');
@@ -84,6 +84,17 @@ class EpiTimeCommand extends Command {
                 .setTimestamp();
 
         return message.util.send(embed);
+    }
+
+    async toEntities(list){
+        let elements = [];
+        for (const element of list) {
+            elements.push(element);
+            if(element.children){
+                await elements.push.apply(elements, await this.toEntities(element.children));
+            }
+        }
+        return elements;
     }
 }
 
